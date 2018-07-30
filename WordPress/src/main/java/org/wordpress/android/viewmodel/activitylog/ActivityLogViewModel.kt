@@ -4,8 +4,8 @@ import android.arch.lifecycle.LiveData
 import android.arch.lifecycle.MutableLiveData
 import android.arch.lifecycle.Observer
 import android.arch.lifecycle.ViewModel
+import kotlinx.coroutines.experimental.CommonPool
 import kotlinx.coroutines.experimental.Job
-import kotlinx.coroutines.experimental.android.UI
 import kotlinx.coroutines.experimental.launch
 import org.wordpress.android.R
 import org.wordpress.android.R.string
@@ -161,7 +161,7 @@ class ActivityLogViewModel @Inject constructor(
     private fun reloadEventsAsync(
         disableActions: Boolean = areActionsEnabled,
         displayProgressItem: Boolean = isRewindProgressItemShown
-    ) = launch(UI) {
+    ) = launch(CommonPool) {
         val eventList = activityLogStore.getActivitiesFromDatabaseAsync(site, false).await()
         val items = ArrayList<ActivityLogListItem>(eventList.map { model ->
             ActivityLogListItem.Event(model, disableActions)
@@ -221,29 +221,29 @@ class ActivityLogViewModel @Inject constructor(
         if (canRequestEventsUpdate(isLoadingMore)) {
             val newStatus = if (isLoadingMore) ActivityLogListStatus.LOADING_MORE else ActivityLogListStatus.FETCHING
             _eventListStatus.postValue(newStatus)
-            val payload = ActivityLogStore.FetchActivityLogPayload(site, isLoadingMore)
+            fetchActivities(site, isLoadingMore)
+        }
+    }
 
-            launch(UI) {
-                val result = activityLogStore.fetchActivitiesAsync(payload)
-                if (result.isError) {
-                    _eventListStatus.postValue(ActivityLogListStatus.ERROR)
-                    AppLog.e(AppLog.T.ACTIVITY_LOG, "An error occurred while fetching the Activity log events")
-                } else {
-                    var reloadJob: Job? = null
-                    if (result.rowsAffected > 0) {
-                        reloadJob = reloadEventsAsync(!rewindStatusService.isRewindAvailable,
-                                rewindStatusService.isRewindInProgress)
-                        rewindStatusService.requestStatusUpdate()
-                        moveToTop()
-                    }
+    private fun fetchActivities(site: SiteModel, isLoadingMore: Boolean) = launch {
+        val result = activityLogStore.fetchActivitiesAsync(site, isLoadingMore)
+        if (result.isError) {
+            _eventListStatus.postValue(ActivityLogListStatus.ERROR)
+            AppLog.e(AppLog.T.ACTIVITY_LOG, "An error occurred while fetching the Activity log events")
+        } else {
+            var reloadJob: Job? = null
+            if (result.rowsAffected > 0) {
+                reloadJob = reloadEventsAsync(!rewindStatusService.isRewindAvailable,
+                        rewindStatusService.isRewindInProgress)
+                rewindStatusService.requestStatusUpdate()
+                moveToTop()
+            }
 
-                    reloadJob?.join()
-                    if (result.canLoadMore) {
-                        _eventListStatus.postValue(ActivityLogListStatus.CAN_LOAD_MORE)
-                    } else {
-                        _eventListStatus.postValue(ActivityLogListStatus.DONE)
-                    }
-                }
+            reloadJob?.join()
+            if (result.canLoadMore) {
+                _eventListStatus.postValue(ActivityLogListStatus.CAN_LOAD_MORE)
+            } else {
+                _eventListStatus.postValue(ActivityLogListStatus.DONE)
             }
         }
     }
